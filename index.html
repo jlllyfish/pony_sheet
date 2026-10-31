@@ -145,7 +145,7 @@ let sort = { col: null, dir: 1 };
 let fstate = {};    // valeur de chaque filtre, par index
 
 grist.ready({ requiredAccess: "full" });
-const VERSION = "2026-10-31-a";
+const VERSION = "2026-10-31-b";
 console.info("Widget tableau générique — version", VERSION);
 const metaReady = loadMeta();
 // Comme le widget d'origine : vue cloisonnée (une seule valeur visible, via les règles d'accès Grist)
@@ -479,17 +479,26 @@ function sample(c) {
   return r ? cell({ ...c, url: "", edit: false, sub: "" }, r) : '<span style="color:#999">vide</span>';
 }
 let hiddenOpen = false;
-let colorOpen = null; // colonne dont le panneau de couleurs est ouvert
+let colorOpen = null; // { row: colonne sous laquelle le panneau s'ouvre, target: colonne dont on règle les couleurs }
 // Couleurs proposées pour les colonnes au format Pastille ou utilisées en pastille sous une valeur
-function hasColors(c) { return c.type === "badge" || draft.columns.some(x => x.show && x.sub === c.id); }
+// Une ligne propose les couleurs de sa propre pastille (format Pastille) et/ou de sa « pastille sous la valeur »
+function palBtn(row, target, title) {
+  const on = colorOpen && colorOpen.row === row && colorOpen.target === target;
+  return `<button class="mini" data-pal-row="${esc(row)}" data-pal="${esc(target)}" title="${title}" style="${on ? "background:#E3E3FD !important" : ""}"><i class="ri-palette-line"></i></button>`;
+}
+function colorRowFor(id) {
+  const i = draft.columns.findIndex(x => x.id === id);
+  return i < 0 ? "" : colorRow(draft.columns[i], i);
+}
 function colorRow(c, i) {
   const sel = (k, attrs) => `<select ${attrs}>${Object.entries(COLORS).map(([v, t]) => `<option value="${v}"${v === (k || "") ? " selected" : ""}>${t}</option>`).join("")}</select>`;
   const vals = [...new Set(ALL.map(r => txt(r[c.id])).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
   Object.keys(c.colors || {}).forEach(v => { if (!vals.includes(v)) vals.push(v); });
   const shown = vals.slice(0, 40);
   return `<tr class="colors-row"><td></td><td colspan="11"><div class="col-map">
-    <label><strong>Par défaut</strong>${sel(c.color, `data-cdef="${i}"`)}</label>
-    ${shown.map(v => `<label><span class="badge b-state ${bc(c, v)}">${esc(v)}</span>${sel((c.colors || {})[v], `data-cval="${i}" data-v="${esc(v)}"`)}</label>`).join("")}
+    <span style="font-size:.75rem;color:#000091;font-weight:700">Couleurs de « ${esc(c.label)} » :</span>
+    <label>Par défaut ${sel(c.color, `data-cdef="${i}"`)}</label>
+    ${shown.map(v => `<label><span class="badge ${c.type === "badge" ? "b-state" : "b-sub"} ${bc(c, v)}" style="display:inline-block;margin:0">${esc(v)}</span>${sel((c.colors || {})[v], `data-cval="${i}" data-v="${esc(v)}"`)}</label>`).join("")}
     ${vals.length > 40 ? `<small>(${vals.length - 40} autres valeurs : couleur par défaut)</small>` : ""}
   </div></td></tr>`;
 }
@@ -556,10 +565,10 @@ function drawCfg() {
         <td class="c"><input type="checkbox" data-ci="${i}" data-ck="edit" ${c.edit ? "checked" : ""}></td>
         <td><input data-ci="${i}" data-ck="url" value="${esc(c.url)}" placeholder="https://…/{value}" style="width:160px"></td>
         <td><select data-ci="${i}" data-ck="sub" title="${esc(colById2(c.sub))}">${colOpts(c.sub, "—")}</select></td>
-        <td class="c">${hasColors(c) ? `<button class="mini" data-pal="${esc(c.id)}" title="Couleurs des pastilles"><i class="ri-palette-line"></i></button>` : ""}</td>
+        <td class="c" style="white-space:nowrap">${c.type === "badge" ? palBtn(c.id, c.id, "Couleurs de cette colonne") : ""}${c.sub ? palBtn(c.id, c.sub, "Couleurs de la pastille sous la valeur") : ""}</td>
         <td><code>${esc(c.id)}</code></td>
         <td>${sample(c)}</td>
-      </tr>${colorOpen === c.id && hasColors(c) ? colorRow(c, i) : ""}`).join("") || '<tr><td colspan="12">Aucune colonne affichée</td></tr>'}</tbody>
+      </tr>${colorOpen && colorOpen.row === c.id ? colorRowFor(colorOpen.target) : ""}`).join("") || '<tr><td colspan="12">Aucune colonne affichée</td></tr>'}</tbody>
     </table></div>
 
     ${hiddenCols.length ? `<details id="hidCols" ${hiddenOpen ? "open" : ""}>
@@ -604,7 +613,11 @@ function drawCfg() {
     }
     if (el.dataset.ck === "type" || el.dataset.ck === "sub") drawCfg();
   }));
-  box.querySelectorAll("[data-pal]").forEach(el => el.onclick = () => { colorOpen = colorOpen === el.dataset.pal ? null : el.dataset.pal; drawCfg(); });
+  box.querySelectorAll("[data-pal]").forEach(el => el.onclick = () => {
+    const same = colorOpen && colorOpen.row === el.dataset.palRow && colorOpen.target === el.dataset.pal;
+    colorOpen = same ? null : { row: el.dataset.palRow, target: el.dataset.pal };
+    drawCfg();
+  });
   box.querySelectorAll("[data-cdef]").forEach(el => el.onchange = () => { draft.columns[+el.dataset.cdef].color = el.value; drawCfg(); });
   box.querySelectorAll("[data-cval]").forEach(el => el.onchange = () => {
     const c = draft.columns[+el.dataset.cval];
